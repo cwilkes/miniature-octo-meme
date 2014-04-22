@@ -135,6 +135,13 @@ class World {
                             board[i][j + 1] = pg.getNextColor();
                             board[i + 1][j] = pg.getNextColor();
                             board[i + 1][j + 1] = pg.getNextColor();
+							// (2, 3) 1 (2, 4) 2 (3, 3) 0 (3, 4) 1
+							System.err.println(String.format("Filled: (%d, %d) %d (%d, %d) %d (%d, %d) %d (%d, %d) %d",
+								i, j, board[i][j],
+								i, j+1, board[i][j+1],
+								i+1, j, board[i+1][j],
+								i+1, j+1, board[i+1][j+1]));
+
                         }
 
                         parent.updateDrawer();
@@ -381,10 +388,17 @@ public class SquareRemoverVis {
     public static boolean startPaused = false;
     public static long quitTime = -1;
 
-    public static final int ANSWER_STEPS = 10000;
+   public static int getProperty(String key, int defaultValue) {
+	String ret = System.getenv(key);
+	return ret == null ? defaultValue : Integer.parseInt(ret);
+	}
+
+    public static final int ANSWER_STEPS = getProperty("sr_moves", 10000);
     public static final int ANSWER_LENGTH = 3 * ANSWER_STEPS;
 
     public int[] runSolution(TestCase tc, String execCmd) throws Exception {
+	    System.err.println("Have " + ANSWER_STEPS + " moves");
+	    System.err.println("Env: " + System.getenv());
         Process solution = null;
 
         try {
