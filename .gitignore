@@ -1,2 +1,3 @@
 lib/SquareRemoverVis.jar
 target/
+*.pyc

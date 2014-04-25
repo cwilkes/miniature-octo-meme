@@ -41,13 +41,13 @@ templates.append(('.xx./mmmx/.x../....', [(0, 0, 2), (-1, 0, 2)]))
 templates.append(('.xx./mmmx/..x./....', [(0, 1, 2), (0, 0, 1), (-1, 0, 1)]))
 templates.append(('.xx./xmmm/.x../....', [(0, 1, 2), (0, 2, 3)]))
 templates.append(('..../.x../mmmx/..x.', [(1, 0, 0), (1, -1, 1)]))
-templates.append(('..../..x./mmmx/..x.', [(1, 0, 0), (1, -1, 1)]))
+templates.append(('..../..x./mmmx/..x.', [(1, 1, 0), (1, 0, 1), (1, -1, 1)]))
 
 # three in a row vert
 templates.append(('xm../xmx./xm../xx..', [(0, 0, 1), (-1, 0, 2)]))
 templates.append(('xx../xm../xmx./xm..', [(1, 0, 1), (1, 2, 0)]))
 templates.append(('..mx/..mx/.xmx/..xx', [(0, 1, 3), (-1, 1, 2)]))
-templates.append(('..xx/.xmx/.xmx/.xmx', [(1, 1, 3), (2, 1, 0)]))
+templates.append(('..xx/.xmx/..mx/..mx', [(1, 1, 3), (2, 1, 0)]))
 
 
 def template_row_matches(sr, row, col, row_val, color):
@@ -59,17 +59,16 @@ def template_row_matches(sr, row, col, row_val, color):
     return True
 
 
-def do_templates(sr, row, col, color, template_combo):
-    template, moves = template_combo
-    okay = True
+def do_templates(sr, row, col, color, template_pos):
+    template, moves = templates[template_pos]
+    okay = False
     for row_pos, row_val in enumerate(template.split('/')):
-        if not template_row_matches(sr, row+(row_pos-1), col, row_val, color):
-            okay = False
+        if template_row_matches(sr, row+(row_pos-1), col, row_val, color):
+            okay = True
     if okay:
-        real_moves = [(_[0]+row, _[1]+col, _[2]) for _ in moves]
-        print >>sys.stderr, 'At (%d,%d) with color %d matched template %s with moves %s' % (row, col, color, template, real_moves)
-        for r, c, direction in real_moves:
-            sr.move_tile(r, c, direction)
+        print >>sys.stderr, 'At (%d,%d) with color %d matched template %s with moves %s' % (row, col, color, template, moves)
+        for row_d, col_d, move in moves:
+            sr.move_tile(row+row_d, col+col_d, move)
 
 
 class Tile(object):
@@ -140,7 +139,7 @@ def bottom_right(coord):
     return coord[0]+1, coord[1]+1
 
 
-class MySquareRemover(object):
+class SquareRemover(object):
     def __init__(self, colors, board, startSeed):
         self.number_colors = colors
         self.board_size = len(board)
@@ -331,6 +330,96 @@ class MySquareRemover(object):
         return move_count
 
 
+def play_randomly(sr):
+    while sr.is_under_moves():
+        row = random.randint(1, sr.board_size-2)
+        col = random.randint(1, sr.board_size-2)
+        direction = random.randint(0, 3)
+        sr.move_tile(row, col, direction)
+
+
+def get_min_max_for_size(pos, size, max_val):
+    min_amount = max(0, pos-size/2)
+    max_amount = min(max_val, min_amount+size)
+    return list(range(max_amount-size, max_amount))
+
+
+def make_neighbors_frame(sr):
+    neighbors = list()
+    for row in range(sr.board_size):
+        neighbor_row = list()
+        for col in range(sr.board_size):
+            color_row = list()
+            for c in range(sr.number_colors):
+                color_row.append([set() for _ in range(5)])
+            neighbor_row.append(color_row)
+        neighbors.append(neighbor_row)
+    for row in range(sr.board_size):
+        for col in range(sr.board_size):
+            c = dict()
+            for color in range(sr.number_colors):
+                c[color] = [set() for _ in range(10)]
+            for row2 in get_min_max_for_size(row, 5, sr.board_size):
+                for col2 in get_min_max_for_size(col, 5, sr.board_size):
+                    color = sr.get_color(row2, col2)
+                    distance = abs(row-row2) + abs(col-col2)
+                    c[color][distance].add(((row2, col2), distance))
+    return neighbors
+
+
+def play_left_to_right(sr):
+    print >>sys.stderr, make_neighbors_frame(sr)
+    row = 0
+    times_through = 0
+    reversed = False
+    while len(sr.moves) < max_moves:
+        color = row % sr.number_colors
+        r = range(sr.board_size-1)
+        if reversed:
+            color = (color + 1) % sr.number_colors
+            r = range(sr.board_size-1, 0, -1)
+        print >>sys.stderr, 'move', len(sr.moves), 'row', row, 'color', color
+        did_move = False
+        for col in r:
+            if sr.get_color(row, col) == color:
+                continue
+            if sr.get_color(row,col+1) == color:
+                sr.move_tile(row, col, 1)
+                did_move = True
+            if len(sr.moves) == max_moves:
+                break
+        row = (row + 1) % sr.board_size
+        if did_move:
+            times_through = 0
+        else:
+            times_through += 1
+            if times_through >= sr.board_size:
+                if reversed:
+                    reversed = False
+                    times_through = 0
+                else:
+                    reversed = True
+                    times_through = 0
+    play_randomly(sr)
+
+
+def play_row_swaps(sr):
+    row = 0
+    move_scores = list()
+    while len(sr.moves) < max_moves:
+        move_scores.append(sr.do_row_swaps(row))
+        if len(move_scores) == 2*sr.board_size:
+            if sum(move_scores) == 0:
+                break
+            move_scores.pop(0)
+        row = (row + 1) % sr.board_size
+    print >>sys.stderr, 'switching to random mode'
+    play_randomly(sr)
+    while len(sr.moves) > max_moves:
+        sr.moves.pop(max_moves)
+    print >>sys.stderr, 'rows', len(sr.moves)
+
+
 def get_best_color(sr, row, col, delta=1):
     # for now get the one with the most tiles and the lowest color number
     counts = Counter()
@@ -346,21 +435,216 @@ def get_best_color(sr, row, col, delta=1):
     return best_color, counts[best_color]
 
 
+def do_slide_top_left(sr, row, col, color):
+    if sr.get_color(row, col) == color:
+        return False
+    if sr.get_color(row-1, col) == color:
+        sr.move_tile(row-1, col, 2)
+        return True
+    elif sr.get_color(row, col-1) == color:
+        sr.move_tile(row, col-1, 1)
+        return True
+    return False
+
+
+def do_slide_top_right(sr, row, col, color):
+    if sr.get_color(row, col+1) == color:
+        return False
+    if sr.get_color(row-1, col+1) == color:
+        sr.move_tile(row-1, col+1, 2)
+        return True
+    elif sr.get_color(row, col+2) == color:
+        sr.move_tile(row, col+2, 3)
+        return True
+    return False
+
+
+def do_slide_bottom_left(sr, row, col, color):
+    if sr.get_color(row+1, col) == color:
+        return False
+    if sr.get_color(row+1, col-1) == color:
+        sr.move_tile(row+1, col-1, 1)
+        return True
+    elif sr.get_color(row+2, col) == color:
+        sr.move_tile(row+2, col, 0)
+        return True
+    return False
+
+
+def do_slide_bottom_right(sr, row, col, color):
+    if sr.get_color(row+1, col+1) == color:
+        return False
+    if sr.get_color(row+2, col+1) == color:
+        sr.move_tile(row+2, col+1, 0)
+        return True
+    elif sr.get_color(row+1, col+2) == color:
+        sr.move_tile(row+1, col+2, 3)
+        return True
+    return False
+
+
+def make_three_square(sr, row, col):
+    best_color, number_tiles = get_best_color(sr, row, col)
+    print >>sys.stderr, 'Working on (%d,%d) color: %d, tile count: %d' %(row, col, best_color, number_tiles)
+    # hard code for now
+    number_placed = sr.get_color(row, col) == best_color
+    number_placed += sr.get_color(row, col+1) == best_color
+    number_placed += sr.get_color(row+1, col) == best_color
+    number_placed += sr.get_color(row+1, col+1) == best_color
+    print >>sys.stderr,'number placed', number_placed
+    if number_placed >= 3:
+        return True
+    if do_slide_top_left(sr, row, col, best_color):
+        number_placed += 1
+        print >>sys.stderr, 'TL number placed', number_placed
+        if number_placed >= 3:
+            return True
+    if do_slide_top_right(sr, row, col, best_color):
+        number_placed += 1
+        print >>sys.stderr, 'TR number placed', number_placed
+        if number_placed >= 3:
+            return True
+    if do_slide_bottom_left(sr, row, col, best_color):
+        number_placed += 1
+        print >>sys.stderr,'BL number placed', number_placed
+        if number_placed >= 3:
+            return True
+    if do_slide_bottom_right(sr, row, col, best_color):
+        number_placed += 1
+        print >>sys.stderr,'BR number placed', number_placed
+        if number_placed >= 3:
+            return True
+    # bah, didn't have enough to make a three spot
+    return False
+
+
+def find_double_slide(sr, row, col, color, d1):
+    if sr.get_color(row, col) == color:
+        return False
+    if sr.get_color(row,col+1) == color:
+        if sr.get_color(row,col+2) == color:
+            sr.move_tile(row,col+1, 3)
+            sr.move_tile(row,col+2, 3)
+            return True
+        if sr.get_color(row-1,col+1) == color:
+            sr.move_tile(row,col+1, 3)
+            sr.move_tile(row-1,col+1, 2)
+            return True
+    if sr.get_color(row+1,col) == color:
+        if sr.get_color(row+1,col-1) == color:
+            sr.move_tile(row+1,col, 0)
+            sr.move_tile(row+1,col-1, 1)
+            return True
+        if sr.get_color(row+2,col) == color:
+            sr.move_tile(row+1,col, 0)
+            sr.move_tile(row+2,col, 0)
+            return True
+
+
+def complete_four_square(sr, row, col):
+    best_color, count = get_best_color(sr, row, col, 0)
+    if do_slide_top_left(sr, row, col, best_color):
+        count+=1
+        if count == 4:
+            return True
+    if do_slide_top_right(sr, row, col, best_color):
+        count+=1
+        if count == 4:
+            return True
+    if do_slide_bottom_left(sr, row, col, best_color):
+        count+=1
+        if count == 4:
+            return True
+    if do_slide_bottom_right(sr, row, col, best_color):
+        count+=1
+        if count == 4:
+            return True
+    # hrm, well see if we can recruit anyone
+    if not sr.get_color(row, col) == best_color and sr.get_color(row-1,col-1) == best_color:
+        sr.move_tile(row-1,col-1, 2)
+        sr.move_tile(row,col-1, 1)
+        count+=1
+        if count == 4:
+            return True
+    if not sr.get_color(row, col+1) == best_color and sr.get_color(row-1,col+2) == best_color:
+        sr.move_tile(row-1,col+2, 2)
+        sr.move_tile(row,col+2, 3)
+        count+=1
+        if count == 4:
+            return True
+    if not sr.get_color(row+1, col) == best_color and sr.get_color(row+2,col-1) == best_color:
+        sr.move_tile(row+2,col-1, 0)
+        sr.move_tile(row+1,col-1, 1)
+        count+=1
+        if count == 4:
+            return True
+    if not sr.get_color(row+1, col+1) == best_color and sr.get_color(row+2,col+2) == best_color:
+        sr.move_tile(row+2,col+2, 0)
+        sr.move_tile(row+1,col+2, 3)
+        count+=1
+        if count == 4:
+            return True
+    # finally check to see if we should do a slide with existing block
+    find_double_slide(sr, row, col, best_color, (0,1), (0,))
+
+
+    if sr.get_color(row,col+1) == color:
+        if sr.get_color(row,col+2) == color:
+            sr.move_tile(row,col+1, 3)
+            sr.move_tile(row,col+2, 3)
+            return True
+        if sr.get_color(row-1,col+1) == color:
+            sr.move_tile(row,col+1, 3)
+            sr.move_tile(row-1,col+1, 2)
+            return True
+    if sr.get_color(row+1,col) == color:
+        if sr.get_color(row+1,col-1) == color:
+            sr.move_tile(row+1,col, 0)
+            sr.move_tile(row+1,col-1, 1)
+            return True
+        if sr.get_color(row+2,col) == color:
+            sr.move_tile(row+1,col, 0)
+            sr.move_tile(row+2,col, 0)
+            return True
+
+
+def play_make_threes(sr):
+    """Makes L shaped tokens"""
+    quit = False
+    while not quit:
+        move_count = len(sr.moves)
+        for row in range(1, sr.board_size-1, 4):
+            for col in range(1, sr.board_size-1, 4):
+                if sr.remaining_move_count() < 4:
+                    quit = True
+                    break
+                make_three_square(sr, row, col)
+        for row in range(1, sr.board_size-1, 4):
+            for col in range(1, sr.board_size-1, 4):
+                if sr.remaining_move_count() < 8:
+                    quit = True
+                    break
+                complete_four_square(sr, row, col)
+        if len(sr.moves) == move_count:
+            break
+    while sr.is_under_moves():
+        sr.move_tile(0,0,1)
+
+
 def play_make_threes2(sr):
     start_row, start_col = 1, 1
     while sr.is_under_moves():
         cur_moves = len(sr.moves)
-        for template in reversed(templates):
-            print >>sys.stderr, 'on template', template
+        for template_pos in range(len(templates)):
+            print >>sys.stderr, 'on template pos', template_pos
             for row in range(start_row, sr.board_size-2, 4):
                 for col in range(start_col, sr.board_size-2, 4):
                     best_color, count = get_best_color(sr, row, col, 0)
                     if count != 3:
                         best_color, count = get_best_color(sr, row, col, 1)
-                    do_templates(sr, row, col, best_color, template)
+                    do_templates(sr, row, col, best_color, template_pos)
         if len(sr.moves) == cur_moves:
             break
-
 
 def play_fill_ending(sr):
     while len(sr.moves) > max_moves:
@@ -368,99 +652,41 @@ def play_fill_ending(sr):
     while sr.is_under_moves():
         sr.move_tile(0,0,1)
 
-import pattern_counter as pc
-from collections import defaultdict
-import itertools as it
-
-def do_single_round(sr, all_moves, chop_off_end_move=True):
-    print >>sys.stderr, 'ROUND'
-    # dictionary in form (row,col) => list of moves to solve
-    # put in a queue so as to pull off the best ones
-    queue = defaultdict(list)
-    for key, moves in all_moves.items():
-        queue[len(moves)].append((key, moves))
-    # just start grabbing from the top
-    moved_pieces = set()
-
-    def key_in_moved(my_key):
-        if (my_key[0]+1, my_key[1]+1) in moved_pieces:
-            return True
-        if (my_key[0]+1, my_key[1]+2) in moved_pieces:
-            return True
-        if (my_key[0]+2, my_key[1]+1) in moved_pieces:
-            return True
-        if (my_key[0]+1, my_key[1]+2) in moved_pieces:
-            return True
-        return False
-
-    def moves_in_moved(moves):
-        for r, c, direction in moves:
-            if (r, c) in moved_pieces:
-                return True
-        return False
-
-    count_moves = 0
-
-    for number_moves in sorted(queue.keys()):
-        print >>sys.stderr, ' Working on number moves %d with %d chances' % (number_moves, len(queue[number_moves]))
-        for key, moves in queue[number_moves]:
-            if key_in_moved(key):
-                continue
-                random.shuffle(moves)
-            converted_moves = [(_[0] + key[0], _[1] + key[1], _[2]) for _ in moves]
-            if moves_in_moved(converted_moves):
-                continue
-            lst = converted_moves[:-1] if chop_off_end_move else converted_moves
-            if len(lst) == 0:
-                continue
-            pre_filled_count = sr.filled_spaces_count
-            for move in lst:
-                sr.move_tile(*move)
-            count_moves += 1
-            if sr.filled_spaces_count != pre_filled_count:
-                print >>sys.stderr, 'breaking out as filled a spot'
-                return count_moves
-            # protect all of my turf
-            for a, b in it.product(range(4), range(4)):
-                moved_pieces.add((key[0]+a, key[1]+b))
-            print >>sys.stderr, '  Did moves', lst
-    return count_moves
+import izone, sweeper
 
 
-import move_finder
+def do_sweeper(sr):
+    s = sweeper.Sweeper(sr)
+    pos = 1,1
+    color = 2
+    for key, val in s.block_moves.items():
+        print >>sys.stderr, key, val
 
-class SquareRemover(object):
-    def __init__(self):
-        pass
-
-    def playIt(self, colors, board, startSeed):
-        sr = MySquareRemover(colors, board, startSeed)
-        mf = move_finder.MoveFinder(sr, 4)
-        for (row, col), color_moves in mf.find_moves(0):
-            print row, col, color_moves
-        all_moves = pc.count_patterns(sr.board_size, sr.number_colors, sr)
-        loop_count = 0
-        while loop_count < 500:
-            do_single_round(sr, all_moves)
-            all_moves = pc.count_patterns(sr.board_size, sr.number_colors, sr)
-            if do_single_round(sr, all_moves, False) < 1:
-                break
-            all_moves = pc.count_patterns(sr.board_size, sr.number_colors, sr)
-            if do_single_round(sr, all_moves, False) < 1:
-                break
-            all_moves = pc.count_patterns(sr.board_size, sr.number_colors, sr)
-            do_single_round(sr, all_moves)
-            all_moves = pc.count_patterns(sr.board_size, sr.number_colors, sr)
-            if do_single_round(sr, all_moves, False) < 1:
-                break
-            loop_count+=1
-        play_fill_ending(sr)
-        moves_ret = list()
-        for row, col, direction in sr.moves:
-            moves_ret.append(row)
-            moves_ret.append(col)
-            moves_ret.append(direction)
-        return moves_ret
+def playIt(colors, board, startSeed):
+    sr = SquareRemover(colors, board, startSeed)
+    # zregistry = izone.create_zones(sr)[0]
+    # for _ in range(200):
+    #     moves = zregistry.get_best_moves()
+    #     print >>sys.stderr, 'zmoves', moves
+    #     if moves:
+    #         for block_moves in moves:
+    #             for move in block_moves:
+    #                 sr.move_tile(move[0], move[1], move[2])
+    #                 zregistry.did_move(move[0], move[1], move[2])
+    #     else:
+    #         break
+    # play_randomly(sr)
+    # play_row_swaps(sr)
+    #play_left_to_right(sr)
+    play_make_threes2(sr)
+    #do_sweeper(sr)
+    play_fill_ending(sr)
+    moves_ret = list()
+    for row, col, direction in sr.moves:
+        moves_ret.append(row)
+        moves_ret.append(col)
+        moves_ret.append(direction)
+    return moves_ret
 
 
 if __name__ == '__main__':
@@ -470,8 +696,8 @@ if __name__ == '__main__':
     for _ in range(N):
         board.append(sys.stdin.readline().strip())
     startSeed = int(sys.stdin.readline().strip())
-    sre = SquareRemover()
-    ret = sre.playIt(colors, board, startSeed)
+
+    ret = playIt(colors, board, startSeed)
     if len(ret) != 3*max_moves:
         raise Exception('Must be array of length 30000, not %d' % (len(ret), ))
 
